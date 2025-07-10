@@ -18,10 +18,12 @@ const PORT =3000;
 //     res.send("Hii i am jagadeesh");
 
 // });
+const drawdata=[];
 io.on('connection',(socket)=>{
     console.log("a user logged");
-
+    socket.emit('init-canvas', drawingData);
     socket.on('draw',(data)=>{
+      drawdata.push(data);
     socket.broadcast.emit('draw',data);
 });
   socket.on('disconnect', () => {
