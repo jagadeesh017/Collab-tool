@@ -14,16 +14,13 @@ const io= new  Server(server,{
 
 
 const PORT =3000;
-// app.get('/',(req,res)=>{
-//     res.send("Hii i am jagadeesh");
 
-// });
-const drawdata=[];
+const drawingdata=[];
 io.on('connection',(socket)=>{
     console.log("a user logged");
-    socket.emit('init-canvas', drawingData);
+    socket.emit('init-canvas', drawingdata);
     socket.on('draw',(data)=>{
-      drawdata.push(data);
+      drawingdata.push(data);
     socket.broadcast.emit('draw',data);
 });
   socket.on('disconnect', () => {

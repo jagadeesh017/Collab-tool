@@ -6,6 +6,7 @@ export default function App() {
   const isDrawing = useRef(false);
   const socketRef = useRef();
   const [mode, setMode] = useState('draw');
+  const[file,setfile]= useState(null);
 
   useEffect(() => {
     const socket = io('http://localhost:3000');
@@ -25,7 +26,7 @@ export default function App() {
     });
     socket.on('init-canvas',(alldata)=>
     {
-      const canvas=CanvasRef.current;
+      const canvas=canvasRef.current;
       const ctx =canvas.getContext('2d');
         alldata.forEach(point => {
         ctx.lineWidth = point.mode === 'draw' ? 2 : 20;
@@ -88,7 +89,17 @@ export default function App() {
     const ctx = canvas.getContext('2d');
     ctx.clearRect(0, 0, canvas.width, canvas.height);
   };
+  const handleupload= (e)=>{
+    const file=e.target.file[0];
+    if(file && file.type === 'application/pdf')
+    {
+      setfile(file);
+      console.log("file uploaded");
+    }
+    else
+    console.log("Please upload a valid PDF file");
 
+  }
   return (
     <div className='flex flex-col items-center h-screen bg-gray-900 p-4'>
       <div className="mb-4">
@@ -105,7 +116,19 @@ export default function App() {
           {mode === 'draw' ? 'Erase' : 'Draw'}
         </button>
       </div>
-      <canvas
+      <div className="m-4">
+  <label className="inline-block bg-blue-600 text-white px-4 py-2 rounded cursor-pointer hover:bg-blue-700 transition">
+    Upload PDF
+    <input
+      type="file"
+      accept="application/pdf"
+      onChange={handleupload}
+      className="hidden"
+    />
+  </label>
+</div>
+
+       <canvas
         id="myCanvas"
         ref={canvasRef}
         onMouseDown={handleMouseDown}
