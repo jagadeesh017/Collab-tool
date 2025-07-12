@@ -64,6 +64,14 @@ export default function App() {
       }
     });
 
+    socketRef.current.on('page-change', (pageNum) => {
+      console.log('Received page change:', pageNum);
+      setCurrentPage(pageNum);
+      if (pdfDoc) {
+        renderPage(pageNum);
+      }
+    });
+
     socketRef.current.on('mode-change', setMode)
 
     return () => socketRef.current.disconnect()
@@ -108,7 +116,6 @@ export default function App() {
       const page = await pdfDoc.getPage(pageNumber)
       const viewport = page.getViewport({ scale: 1.5 })
 
-      // Update all canvas sizes
       pdfLayer.width = viewport.width
       pdfLayer.height = viewport.height
       drawingLayer.width = viewport.width
@@ -119,7 +126,6 @@ export default function App() {
       canvasRef.current.style.width = `${viewport.width}px`
       canvasRef.current.style.height = `${viewport.height}px`
 
-      // Clear and render PDF
       const ctx = pdfLayer.getContext('2d')
       ctx.clearRect(0, 0, pdfLayer.width, pdfLayer.height)
       ctx.fillStyle = 'white'
@@ -130,7 +136,6 @@ export default function App() {
       redrawCanvas()
     } catch (error) {
       console.error('Error rendering PDF:', error)
-      alert('Error rendering PDF')
     } finally {
       setLoading(false)
     }
@@ -146,10 +151,8 @@ export default function App() {
       const arrayBuffer = await file.arrayBuffer()
       
       console.log('Uploading PDF, size:', arrayBuffer.byteLength)
-      // Send to server first
       socketRef.current.emit("pdf-upload", arrayBuffer);
       
-      // Then process locally
       const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) }).promise
       setPdfDoc(pdf)
       setTotalPages(pdf.numPages)
@@ -228,8 +231,9 @@ export default function App() {
   const changePage = (dir) => {
     const newPage = currentPage + dir
     if (newPage >= 1 && newPage <= totalPages) {
-      setCurrentPage(newPage)
-      clearDrawingLayer()
+      setCurrentPage(newPage);
+      renderPage(newPage);
+      socketRef.current.emit("page-change", newPage);
     }
   }
 

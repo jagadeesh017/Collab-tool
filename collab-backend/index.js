@@ -13,17 +13,19 @@ const io = new Server(server, {
 
 const PORT = 3000;
 let drawingData = [];
-let pdfData = null; // store latest pdf buffer
+let pdfData = null;
+let currentPage = 1;
 
 io.on('connection', (socket) => {
   console.log("A user connected:", socket.id);
   
-  // Send existing drawing data to new user
   socket.emit('init-canvas', drawingData);
   
-  // Send existing PDF to new user if available
   if (pdfData) {
     socket.emit('pdf-upload', pdfData);
+    setTimeout(() => {
+      socket.emit('page-change', currentPage);
+    }, 100);
   }
   
   socket.on('draw', (data) => {
@@ -39,15 +41,17 @@ io.on('connection', (socket) => {
   socket.on('mode-change', (newMode) => {
     socket.broadcast.emit('mode-change', newMode);
   });
+
+  socket.on('page-change', (pageNumber) => {
+    currentPage = pageNumber;
+    socket.broadcast.emit('page-change', pageNumber);
+  });
   
   socket.on("pdf-upload", (data) => {
-    // Store the PDF data for new users
     pdfData = data;
-    // Clear drawing data when new PDF is uploaded
+    currentPage = 1;
     drawingData = [];
-    // Broadcast to OTHER users only (sender handles their own PDF)
     socket.broadcast.emit("pdf-upload", data);
-    // Also emit reset-canvas to clear drawings for everyone
     io.emit('reset-canvas');
   });
   
