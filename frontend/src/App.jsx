@@ -18,13 +18,13 @@ export default function App() {
 
   useEffect(() => {
     if (!login) return
-      socketRef.current = io()
+    socketRef.current = io('http://localhost:3000', { transports: ['websocket'] })
+
     socketRef.current.on('draw', (data) => {
       drawOnLayer(data.x, data.y, data.mode, data.type)
       redrawCanvas()
       drawingDataRef.current.push(data)
     })
-
     socketRef.current.on('init-canvas', (alldata) => {
       if (!drawingLayer) return
       drawingDataRef.current = alldata
@@ -35,44 +35,32 @@ export default function App() {
       })
       redrawCanvas()
     })
-
     socketRef.current.on('reset-canvas', () => {
       const ctx = drawingLayer?.getContext('2d')
       ctx?.clearRect(0, 0, drawingLayer.width, drawingLayer.height)
       redrawCanvas()
       drawingDataRef.current = []
     })
-
     socketRef.current.on("pdf-upload", async (arrayBuffer) => {
-      console.log('Received PDF from server, size:', arrayBuffer.byteLength)
-      const pdfjsLib = window.pdfjsLib;
-      if (!pdfjsLib) return alert("PDF.js not loaded");
+      const pdfjsLib = window.pdfjsLib
+      if (!pdfjsLib) return alert("PDF.js not loaded")
+      setLoading(true)
+      drawingDataRef.current = []
       try {
-        setLoading(true);
-        drawingDataRef.current = [];
-        const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) }).promise;
-        setPdfDoc(pdf);
-        setTotalPages(pdf.numPages);
-        setCurrentPage(1);
-        console.log('PDF loaded successfully, pages:', pdf.numPages);
-      } catch (error) {
-        console.error('Error loading shared PDF:', error);
-        alert("Error loading shared PDF");
+        const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) }).promise
+        setPdfDoc(pdf)
+        setTotalPages(pdf.numPages)
+        setCurrentPage(1)
+      } catch {
+        alert("Error loading shared PDF")
       } finally {
-        setLoading(false);
+        setLoading(false)
       }
-    });
-
+    })
     socketRef.current.on('page-change', (pageNum) => {
-      console.log('Received page change:', pageNum);
-      setCurrentPage(pageNum);
-      if (pdfDoc) {
-        renderPage(pageNum);
-      }
-    });
-
+      setCurrentPage(pageNum)
+    })
     socketRef.current.on('mode-change', setMode)
-
     return () => socketRef.current.disconnect()
   }, [login, drawingLayer])
 
@@ -92,11 +80,16 @@ export default function App() {
 
   useEffect(() => {
     if (pdfDoc && pdfLayer && drawingLayer) {
-      console.log('Rendering page', currentPage)
       clearDrawingLayer()
       renderPage(currentPage)
     }
   }, [pdfDoc, currentPage, pdfLayer, drawingLayer])
+
+  useEffect(() => {
+    if (window.pdfjsLib) {
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'
+    }
+  }, [])
 
   const clearDrawingLayer = () => {
     if (!drawingLayer) return
@@ -109,32 +102,26 @@ export default function App() {
 
   const renderPage = async (pageNumber) => {
     if (!pdfDoc || !pdfLayer || !drawingLayer) return
-    console.log('Rendering page', pageNumber)
     setLoading(true)
     try {
       const page = await pdfDoc.getPage(pageNumber)
       const viewport = page.getViewport({ scale: 1.5 })
-
       pdfLayer.width = viewport.width
       pdfLayer.height = viewport.height
       drawingLayer.width = viewport.width
       drawingLayer.height = viewport.height
       canvasRef.current.width = viewport.width
       canvasRef.current.height = viewport.height
-
       canvasRef.current.style.width = `${viewport.width}px`
       canvasRef.current.style.height = `${viewport.height}px`
-
       const ctx = pdfLayer.getContext('2d')
       ctx.clearRect(0, 0, pdfLayer.width, pdfLayer.height)
       ctx.fillStyle = 'white'
       ctx.fillRect(0, 0, pdfLayer.width, pdfLayer.height)
-      
       await page.render({ canvasContext: ctx, viewport }).promise
-      console.log('Page rendered successfully')
       redrawCanvas()
-    } catch (error) {
-      console.error('Error rendering PDF:', error)
+    } catch {
+      // ignore or alert error if needed
     } finally {
       setLoading(false)
     }
@@ -145,20 +132,16 @@ export default function App() {
     if (!file || file.type !== 'application/pdf') return alert('Upload PDF')
     const pdfjsLib = window.pdfjsLib
     if (!pdfjsLib) return alert('PDF.js not loaded')
+    setLoading(true)
     try {
-      setLoading(true)
       const arrayBuffer = await file.arrayBuffer()
-      
-      console.log('Uploading PDF, size:', arrayBuffer.byteLength)
-      socketRef.current.emit("pdf-upload", arrayBuffer);
-      
+      socketRef.current.emit("pdf-upload", arrayBuffer)
       const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) }).promise
       setPdfDoc(pdf)
       setTotalPages(pdf.numPages)
       setCurrentPage(1)
       clearDrawingLayer()
-    } catch (error) {
-      console.error('PDF upload error:', error)
+    } catch {
       alert('PDF load error')
     } finally {
       setLoading(false)
@@ -230,9 +213,8 @@ export default function App() {
   const changePage = (dir) => {
     const newPage = currentPage + dir
     if (newPage >= 1 && newPage <= totalPages) {
-      setCurrentPage(newPage);
-      renderPage(newPage);
-      socketRef.current.emit("page-change", newPage);
+      setCurrentPage(newPage)
+      socketRef.current.emit("page-change", newPage)
     }
   }
 
