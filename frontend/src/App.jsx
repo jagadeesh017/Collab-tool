@@ -18,8 +18,7 @@ export default function App() {
 
   useEffect(() => {
     if (!login) return
-    socketRef.current = io('http://localhost:3000')
-
+      socketRef.current = io()
     socketRef.current.on('draw', (data) => {
       drawOnLayer(data.x, data.y, data.mode, data.type)
       redrawCanvas()

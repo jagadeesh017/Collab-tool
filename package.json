@@ -1,5 +1,14 @@
 {
+  "name": "live-doc",
+  "version": "1.0.0",
+  "scripts": {
+    "start": "node backend/index.js",
+    "build": "cd frontend && npm run build"
+  },
   "dependencies": {
-    "pdfjs-dist": "^5.3.93"
+    "cors": "^2.8.5",
+    "express": "^5.1.0",
+    "pdfjs-dist": "^5.3.93",
+    "socket.io": "^4.8.1"
   }
 }
