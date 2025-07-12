@@ -1,216 +1,263 @@
-import { useRef, useEffect, useState } from 'react';
-import { io } from 'socket.io-client';
+import { useRef, useEffect, useState } from 'react'
+import { io } from 'socket.io-client'
 
 export default function App() {
-  const canvasRef = useRef(null);
-  const isDrawing = useRef(false);
-  const socketRef = useRef();
-  const [mode, setMode] = useState('draw');
-  const [file, setFile] = useState(null);
-  const [login, setLogin] = useState(false);
-  const [password, setPassword] = useState('');
+  const canvasRef = useRef(null)
+  const isDrawing = useRef(false)
+  const socketRef = useRef()
+  const [mode, setMode] = useState('draw')
+  const [login, setLogin] = useState(false)
+  const [password, setPassword] = useState('')
+  const [pdfDoc, setPdfDoc] = useState(null)
+  const [currentPage, setCurrentPage] = useState(1)
+  const [totalPages, setTotalPages] = useState(0)
+  const [drawingLayer, setDrawingLayer] = useState(null)
+  const [pdfLayer, setPdfLayer] = useState(null)
+  const [loading, setLoading] = useState(false)
+  const drawingDataRef = useRef([])
 
   useEffect(() => {
-    if (!login) return;
-    const socket = io('http://localhost:3000');
-    socketRef.current = socket;
+    if (!login) return
+    socketRef.current = io('http://localhost:3000')
 
-    socket.on('connect', () => {
-      console.log('Connected:', socket.id);
-    });
+    socketRef.current.on('draw', (data) => {
+      drawOnLayer(data.x, data.y, data.mode, data.type)
+      redrawCanvas()
+      drawingDataRef.current.push(data)
+    })
 
-    socket.on('draw', (data) => {
-      const canvas = canvasRef.current;
-      if (!canvas) return;
-      const ctx = canvas.getContext('2d');
-      
-      // Set drawing properties
-      ctx.lineWidth = data.mode === 'draw' ? 2 : 20;
-      ctx.strokeStyle = data.mode === 'draw' ? 'black' : 'white';
-      ctx.lineCap = 'round';
-      
-      if (data.type === 'start') {
-        // Start new path
-        ctx.beginPath();
-        ctx.moveTo(data.x, data.y);
-      } else if (data.type === 'move') {
-        // Continue drawing
-        ctx.lineTo(data.x, data.y);
-        ctx.stroke();
+    socketRef.current.on('init-canvas', (alldata) => {
+      if (!drawingLayer) return
+      drawingDataRef.current = alldata
+      const ctx = drawingLayer.getContext('2d')
+      ctx.clearRect(0, 0, drawingLayer.width, drawingLayer.height)
+      alldata.forEach(point => {
+        drawOnLayer(point.x, point.y, point.mode, point.type)
+      })
+      redrawCanvas()
+    })
+
+    socketRef.current.on('reset-canvas', () => {
+      const ctx = drawingLayer?.getContext('2d')
+      ctx?.clearRect(0, 0, drawingLayer.width, drawingLayer.height)
+      redrawCanvas()
+      drawingDataRef.current = []
+    })
+
+    socketRef.current.on("pdf-upload", async (arrayBuffer) => {
+      console.log('Received PDF from server, size:', arrayBuffer.byteLength)
+      const pdfjsLib = window.pdfjsLib;
+      if (!pdfjsLib) return alert("PDF.js not loaded");
+      try {
+        setLoading(true);
+        drawingDataRef.current = [];
+        const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) }).promise;
+        setPdfDoc(pdf);
+        setTotalPages(pdf.numPages);
+        setCurrentPage(1);
+        console.log('PDF loaded successfully, pages:', pdf.numPages);
+      } catch (error) {
+        console.error('Error loading shared PDF:', error);
+        alert("Error loading shared PDF");
+      } finally {
+        setLoading(false);
       }
     });
 
-    socket.on('init-canvas', (alldata) => {
-      const canvas = canvasRef.current;
-      if (!canvas) return;
-      const ctx = canvas.getContext('2d');
-      
-      // Clear canvas first
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      
-      // Redraw all points
-      alldata.forEach(point => {
-        ctx.lineWidth = point.mode === 'draw' ? 2 : 20;
-        ctx.strokeStyle = point.mode === 'draw' ? 'black' : 'white';
-        ctx.lineCap = 'round';
-        
-        if (point.type === 'start') {
-          ctx.beginPath();
-          ctx.moveTo(point.x, point.y);
-        } else if (point.type === 'move') {
-          ctx.lineTo(point.x, point.y);
-          ctx.stroke();
-        }
-      });
-    });
+    socketRef.current.on('mode-change', setMode)
 
-    socket.on('reset-canvas', () => {
-      const canvas = canvasRef.current;
-      if (!canvas) return;
-      const ctx = canvas.getContext('2d');
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-    });
-
-    socket.on('mode-change', (newMode) => {
-      setMode(newMode);
-    });
-
-    return () => socket.disconnect();
-  }, [login]);
+    return () => socketRef.current.disconnect()
+  }, [login, drawingLayer])
 
   useEffect(() => {
-    if (!login) return;
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    canvas.width = 800;
-    canvas.height = 500;
-    const ctx = canvas.getContext('2d');
-    ctx.lineWidth = 2;
-    ctx.strokeStyle = 'black';
-    ctx.lineCap = 'round';
-  }, [login]);
+    if (!login) return
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const width = 600
+    const height = 800
+    const pdfCanvas = document.createElement('canvas')
+    const drawCanvas = document.createElement('canvas')
+    pdfCanvas.width = drawCanvas.width = canvas.width = width
+    pdfCanvas.height = drawCanvas.height = canvas.height = height
+    setPdfLayer(pdfCanvas)
+    setDrawingLayer(drawCanvas)
+  }, [login])
+
+  useEffect(() => {
+    if (pdfDoc && pdfLayer && drawingLayer) {
+      console.log('Rendering page', currentPage)
+      clearDrawingLayer()
+      renderPage(currentPage)
+    }
+  }, [pdfDoc, currentPage, pdfLayer, drawingLayer])
+
+  const clearDrawingLayer = () => {
+    if (!drawingLayer) return
+    const ctx = drawingLayer.getContext('2d')
+    ctx.clearRect(0, 0, drawingLayer.width, drawingLayer.height)
+    redrawCanvas()
+    drawingDataRef.current = []
+    socketRef.current.emit('reset-canvas')
+  }
+
+  const renderPage = async (pageNumber) => {
+    if (!pdfDoc || !pdfLayer || !drawingLayer) return
+    console.log('Rendering page', pageNumber)
+    setLoading(true)
+    try {
+      const page = await pdfDoc.getPage(pageNumber)
+      const viewport = page.getViewport({ scale: 1.5 })
+
+      // Update all canvas sizes
+      pdfLayer.width = viewport.width
+      pdfLayer.height = viewport.height
+      drawingLayer.width = viewport.width
+      drawingLayer.height = viewport.height
+      canvasRef.current.width = viewport.width
+      canvasRef.current.height = viewport.height
+
+      canvasRef.current.style.width = `${viewport.width}px`
+      canvasRef.current.style.height = `${viewport.height}px`
+
+      // Clear and render PDF
+      const ctx = pdfLayer.getContext('2d')
+      ctx.clearRect(0, 0, pdfLayer.width, pdfLayer.height)
+      ctx.fillStyle = 'white'
+      ctx.fillRect(0, 0, pdfLayer.width, pdfLayer.height)
+      
+      await page.render({ canvasContext: ctx, viewport }).promise
+      console.log('Page rendered successfully')
+      redrawCanvas()
+    } catch (error) {
+      console.error('Error rendering PDF:', error)
+      alert('Error rendering PDF')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleUpload = async (e) => {
+    const file = e.target.files[0]
+    if (!file || file.type !== 'application/pdf') return alert('Upload PDF')
+    const pdfjsLib = window.pdfjsLib
+    if (!pdfjsLib) return alert('PDF.js not loaded')
+    try {
+      setLoading(true)
+      const arrayBuffer = await file.arrayBuffer()
+      
+      console.log('Uploading PDF, size:', arrayBuffer.byteLength)
+      // Send to server first
+      socketRef.current.emit("pdf-upload", arrayBuffer);
+      
+      // Then process locally
+      const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) }).promise
+      setPdfDoc(pdf)
+      setTotalPages(pdf.numPages)
+      setCurrentPage(1)
+      clearDrawingLayer()
+    } catch (error) {
+      console.error('PDF upload error:', error)
+      alert('PDF load error')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const redrawCanvas = () => {
+    const canvas = canvasRef.current
+    const ctx = canvas?.getContext('2d')
+    if (!ctx) return
+    ctx.clearRect(0, 0, canvas.width, canvas.height)
+    if (pdfLayer) ctx.drawImage(pdfLayer, 0, 0)
+    if (drawingLayer) ctx.drawImage(drawingLayer, 0, 0)
+  }
+
+  const drawOnLayer = (x, y, mode, type) => {
+    const ctx = drawingLayer?.getContext('2d')
+    if (!ctx) return
+    ctx.lineWidth = mode === 'draw' ? 2 : 20
+    ctx.strokeStyle = mode === 'draw' ? 'red' : 'rgba(0,0,0,1)'
+    ctx.globalCompositeOperation = mode === 'draw' ? 'source-over' : 'destination-out'
+    ctx.lineCap = 'round'
+    if (type === 'start') ctx.beginPath(), ctx.moveTo(x, y)
+    else ctx.lineTo(x, y), ctx.stroke()
+  }
+
+  const getCoords = (e) => {
+    const rect = canvasRef.current.getBoundingClientRect()
+    const scaleX = canvasRef.current.width / rect.width
+    const scaleY = canvasRef.current.height / rect.height
+    return {
+      x: (e.clientX - rect.left) * scaleX,
+      y: (e.clientY - rect.top) * scaleY
+    }
+  }
 
   const handleMouseDown = (e) => {
-    isDrawing.current = true;
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    
-    // Set current drawing properties
-    ctx.lineWidth = mode === 'draw' ? 2 : 20;
-    ctx.strokeStyle = mode === 'draw' ? 'black' : 'white';
-    ctx.lineCap = 'round';
-    
-    ctx.beginPath();
-    ctx.moveTo(e.nativeEvent.offsetX, e.nativeEvent.offsetY);
-    
-    // Emit start point to server
-    socketRef.current.emit('draw', {
-      x: e.nativeEvent.offsetX,
-      y: e.nativeEvent.offsetY,
-      mode: mode,
-      type: 'start'
-    });
-  };
+    isDrawing.current = true
+    const coords = getCoords(e)
+    drawOnLayer(coords.x, coords.y, mode, 'start')
+    redrawCanvas()
+    socketRef.current.emit('draw', { ...coords, mode, type: 'start' })
+    drawingDataRef.current.push({ ...coords, mode, type: 'start' })
+  }
 
   const handleMouseMove = (e) => {
-    if (!isDrawing.current) return;
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    
-    // Draw locally
-    ctx.lineTo(e.nativeEvent.offsetX, e.nativeEvent.offsetY);
-    ctx.stroke();
-    
-    // Emit line segment to server
-    socketRef.current.emit('draw', {
-      x: e.nativeEvent.offsetX,
-      y: e.nativeEvent.offsetY,
-      mode: mode,
-      type: 'move'
-    });
-  };
+    if (!isDrawing.current) return
+    const coords = getCoords(e)
+    drawOnLayer(coords.x, coords.y, mode, 'move')
+    redrawCanvas()
+    socketRef.current.emit('draw', { ...coords, mode, type: 'move' })
+    drawingDataRef.current.push({ ...coords, mode, type: 'move' })
+  }
 
   const handleMouseUp = () => {
-    isDrawing.current = false;
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    ctx.closePath();
-  };
+    isDrawing.current = false
+  }
 
   const reset = () => {
-    // Clear local canvas immediately
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    
-    // Emit reset to server
-    socketRef.current.emit('reset-canvas');
-  };
+    clearDrawingLayer()
+  }
 
   const toggleMode = () => {
-    const newMode = mode === 'draw' ? 'erase' : 'draw';
-    setMode(newMode);
-    socketRef.current.emit('mode-change', newMode);
-  };
-
-  const handleUpload = (e) => {
-    const file = e.target.files[0];
-    if (file && file.type === 'application/pdf') {
-      setFile(file);
-    }
-  };
-
-  if (!login) {
-    return (
-      <div className="flex flex-col justify-center items-center h-screen bg-gray-900 text-white">
-        <h2 className="text-2xl mb-4">Enter Password</h2>
-        <input
-          type="password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          className="p-2 bg-white/10 text-black rounded mb-4 border"
-          placeholder="Password"
-        />
-        <button
-          onClick={() => {
-            if (password === 'room') setLogin(true);
-            else alert("Wrong password");
-          }}
-          className="px-4 py-2 bg-green-600 rounded"
-        >
-          Login
-        </button>
-      </div>
-    );
+    const newMode = mode === 'draw' ? 'erase' : 'draw'
+    setMode(newMode)
+    socketRef.current.emit('mode-change', newMode)
   }
+
+  const changePage = (dir) => {
+    const newPage = currentPage + dir
+    if (newPage >= 1 && newPage <= totalPages) {
+      setCurrentPage(newPage)
+      clearDrawingLayer()
+    }
+  }
+
+  if (!login) return (
+    <div className="flex flex-col justify-center items-center h-screen bg-gray-900 text-white">
+      <h2 className="text-2xl mb-4">Enter Password</h2>
+      <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="p-2 bg-white/10 text-white rounded mb-4 border" />
+      <button onClick={() => password === 'room' ? setLogin(true) : alert("Wrong password")} className="px-4 py-2 bg-green-600 rounded">Login</button>
+    </div>
+  )
 
   return (
     <div className="flex flex-col items-center h-screen bg-gray-900 p-4">
       <div className="mb-4">
         <button onClick={reset} className="px-4 py-2 bg-red-600 text-white m-2 rounded">Reset</button>
-        <button onClick={toggleMode} className="px-4 py-2 bg-blue-600 text-white m-2 rounded">
-          {mode === 'draw' ? 'Erase' : 'Draw'}
-        </button>
+        <button onClick={toggleMode} className="px-4 py-2 bg-blue-600 text-white m-2 rounded">{mode === 'draw' ? 'Erase' : 'Draw'}</button>
+        {pdfDoc && (
+          <>
+            <button onClick={() => changePage(-1)} disabled={currentPage <= 1} className="px-4 py-2 bg-gray-600 text-white m-2 rounded disabled:opacity-50">Prev</button>
+            <span className="text-white mx-2">Page {currentPage} / {totalPages}</span>
+            <button onClick={() => changePage(1)} disabled={currentPage >= totalPages} className="px-4 py-2 bg-gray-600 text-white m-2 rounded disabled:opacity-50">Next</button>
+          </>
+        )}
       </div>
-
-      <div className="m-4">
-        <label className="inline-block bg-blue-600 text-white px-4 py-2 rounded cursor-pointer">
-          Upload PDF
-          <input type="file" accept="application/pdf" onChange={handleUpload} className="hidden" />
-        </label>
-      </div>
-
-      <canvas
-        ref={canvasRef}
-        onMouseDown={handleMouseDown}
-        onMouseMove={handleMouseMove}
-        onMouseUp={handleMouseUp}
-        className="border bg-white border-black w-[800px] h-[500px]"
-      />
+      <label className="bg-blue-600 text-white px-4 py-2 rounded cursor-pointer mb-4">Upload PDF<input type="file" accept="application/pdf" onChange={handleUpload} className="hidden" /></label>
+      {loading && <div className="text-white">Loading PDF...</div>}
+      <canvas ref={canvasRef} onMouseDown={handleMouseDown} onMouseMove={handleMouseMove} onMouseUp={handleMouseUp} onMouseLeave={handleMouseUp} className="border w-[600px] h-[800px] bg-white" />
+      <div className="text-white mt-4 text-sm">Mode: <span className="font-bold text-blue-300">{mode}</span></div>
     </div>
-  );
+  )
 }
