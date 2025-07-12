@@ -2,7 +2,7 @@
   "name": "live-doc",
   "version": "1.0.0",
   "scripts": {
-    "start": "node backend/index.js",
+    "start": "node collab-backend/index.js",
     "build": "cd frontend && npm run build"
   },
   "dependencies": {
