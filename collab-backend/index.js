@@ -1,21 +1,24 @@
 const http = require('http')
 const { Server } = require('socket.io')
 const express = require('express')
-
+const cors = require('cors')  
 const app = express()
 const server = http.createServer(app)
+const PORT = process.env.PORT || 3000;
+app.use(cors({
+  origin: process.env.FRONTEND_URL || "http://localhost:5173",
+  credentials: true
+}));
 const io = new Server(server, {
   cors: {
-    origin: "https://collab-tool-livm.vercel.app/",
+    origin: process.env.FRONTEND_URL ||"http://localhost:5173",
     methods: ["GET", "POST"]
   }
-})
+});
 
-const PORT =  3000
 let drawingData = []
 let pdfData = null
 let currentPage = 1
-
 io.on('connection', (socket) => {
   socket.emit('init-canvas', drawingData)
   if (pdfData) {
