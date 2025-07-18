@@ -227,7 +227,7 @@ export default function App() {
   )
 
   return (
-    <div className="flex flex-col items-center h-screen bg-gray-900 p-4">
+    <div className="flex flex-col items-center 2*h-screen bg-gray-900 p-4">
       <div className="mb-4">
         <button onClick={reset} className="px-4 py-2 bg-red-600 text-white m-2 rounded">Reset</button>
         <button onClick={toggleMode} className="px-4 py-2 bg-blue-600 text-white m-2 rounded">{mode === 'draw' ? 'Erase' : 'Draw'}</button>
