@@ -18,7 +18,7 @@ export default function App() {
 
   useEffect(() => {
     if (!login) return
-    socketRef.current = io('http://localhost:3000', { transports: ['websocket'] })
+    socketRef.current = io(import.meta.env.VITE_BACKEND_URL, { transports: ['websocket', 'polling'] });
 
     socketRef.current.on('draw', (data) => {
       drawOnLayer(data.x, data.y, data.mode, data.type)
