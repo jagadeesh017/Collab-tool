@@ -121,7 +121,7 @@ export default function App() {
       await page.render({ canvasContext: ctx, viewport }).promise
       redrawCanvas()
     } catch {
-      // ignore or alert error if needed
+     
     } finally {
       setLoading(false)
     }
