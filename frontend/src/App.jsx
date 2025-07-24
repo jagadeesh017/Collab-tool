@@ -230,8 +230,8 @@ export default function App() {
   return (
     <div className="flex flex-col items-center 2*h-screen bg-gray-900 p-4">
       <div className="mb-4">
-        <button onClick={reset} className="px-4 py-2 bg-red-600 text-white m-2 rounded">Reset</button>
-        <button onClick={toggleMode} className="px-4 py-2 bg-blue-600 text-white m-2 rounded">{mode === 'draw' ? 'Erase' : 'Draw'}</button>
+        <button onClick={reset} className="px-4 py-2 bg-gradient-to-br from-blue-700  to-fuchsia-800 text-white m-2 rounded">Reset</button>
+        <button onClick={toggleMode} className="px-4 py-2 bg-gradient-to-br from-blue-700 to-fuchsia-700 text-white m-2 rounded">{mode === 'draw' ? 'Erase' : 'Draw'}</button>
         {pdfDoc && (
           <>
             <button onClick={() => changePage(-1)} disabled={currentPage <= 1} className="px-4 py-2 bg-gray-600 text-white m-2 rounded disabled:opacity-50">Prev</button>
@@ -240,10 +240,11 @@ export default function App() {
           </>
         )}
       </div>
-      <label className="bg-blue-600 text-white px-4 py-2 rounded cursor-pointer mb-4">Upload PDF<input type="file" accept="application/pdf" onChange={handleUpload} className="hidden" /></label>
+      <label className="bg-gradient-to-br from-orange-700 to-red-900 text-white px-4 py-2 rounded cursor-pointer mb-4">Upload PDF<input type="file" accept="application/pdf" onChange={handleUpload} className="hidden" /></label>
       {loading && <div className="text-white">Loading PDF...</div>}
-      <canvas ref={canvasRef} onMouseDown={handleMouseDown} onMouseMove={handleMouseMove} onMouseUp={handleMouseUp} onMouseLeave={handleMouseUp} className="border w-[600px] h-[800px] bg-white" />
       <div className="text-white mt-4 text-sm">Mode: <span className="font-bold text-blue-300">{mode}</span></div>
+      <canvas ref={canvasRef} onMouseDown={handleMouseDown} onMouseMove={handleMouseMove} onMouseUp={handleMouseUp} onMouseLeave={handleMouseUp} className="border w-[600px] h-[800px] bg-white" />
+      
     </div>
   )
 }
