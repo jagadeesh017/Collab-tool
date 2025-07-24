@@ -99,7 +99,7 @@ export default function App() {
     drawingDataRef.current = []
     socketRef.current.emit('reset-canvas')
   }
-
+  
   const renderPage = async (pageNumber) => {
     if (!pdfDoc || !pdfLayer || !drawingLayer) return
     setLoading(true)
@@ -220,10 +220,10 @@ export default function App() {
 
   if (!login) return (
     <div className="flex flex-col justify-center items-center h-screen bg-gray-900 text-white">
-    <h1 className="text-4xl font-mono text-amber-300 mb-4 ">LivePDF</h1>
-      <h2 className="text-2xl mb-4">Enter Password</h2>
+    <h1 className="text-6xl font-mono text-amber-300 mb-9 pb-10  ">LivePDF</h1>
+      <h2 className="text-xl mb-4">Enter Password</h2>
       <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="p-2 bg-white/10 text-white rounded mb-4 border" />
-      <button onClick={() => password === 'room' ? setLogin(true) : alert("Wrong password")} className="px-4 py-2 bg-green-600 rounded">Login</button>
+      <button type='submit' onClick={() => password === 'room' ? setLogin(true) : alert("Wrong password")} className="px-4 py-2 bg-gradient-to-r from-blue-500 to-purple-500 rounded">Enter</button>
     </div>
   )
 
