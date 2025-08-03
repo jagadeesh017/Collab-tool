@@ -1,3 +1,5 @@
+require('dotenv').config()
+
 const http = require('http')
 const express = require('express')
 const cors = require('cors')
@@ -17,7 +19,9 @@ app.use(express.json({ limit: '50mb' }))
 app.use(express.urlencoded({ limit: '50mb', extended: true }))
 
 const mongoUri = process.env.MONGO_URI 
-mongoose.connect(mongoUri) 
+console.log('Connecting to MongoDB:', mongoUri)
+mongoose.connect(mongoUri)
+
 
 mongoose.connection.on('connected', () => console.log('MongoDB connected'))
 mongoose.connection.on('error', err => console.error('MongoDB connection error:', err))
