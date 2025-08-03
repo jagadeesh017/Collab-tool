@@ -1,1 +1,1 @@
-FRONTEND_URL
+sessionSchema.index({ roomId: 1 })

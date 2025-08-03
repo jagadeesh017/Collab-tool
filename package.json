@@ -8,6 +8,7 @@
   "dependencies": {
     "cors": "^2.8.5",
     "express": "^5.1.0",
+    "mongoose": "^8.17.0",
     "pdfjs-dist": "^5.3.93",
     "socket.io": "^4.8.1"
   }
