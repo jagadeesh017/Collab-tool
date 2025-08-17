@@ -2,7 +2,8 @@ import { useRef, useEffect, useState } from 'react'
 import { io } from 'socket.io-client'
 
 function randomColor() {
-  return '#' + Math.floor(Math.random() * 16777215).toString(16)
+  const colors = ['#3b82f6', '#8b5cf6', '#06b6d4', '#10b981', '#f59e0b', '#ef4444', '#ec4899', '#84cc16']
+  return colors[Math.floor(Math.random() * colors.length)]
 }
 
 function randomUserName() {
@@ -326,100 +327,235 @@ export default function App() {
 
   if (!login)
     return (
-      <div className="flex flex-col justify-center items-center h-screen bg-gray-900 text-white">
-        <h1 className="text-6xl font-mono text-amber-300 mb-9 pb-10">LivePDF</h1>
-        <h2 className="text-xl mb-4">Enter Password</h2>
-        <input
-          type="password"
-          value={password}
-          onChange={e => setPassword(e.target.value)}
-          onKeyPress={e => e.key === 'Enter' && (password === 'room' ? setLogin(true) : alert('Wrong password'))}
-          className="p-2 bg-white/10 text-white rounded mb-4 border"
-          placeholder="Enter password..."
-        />
-        <label className="text-white mb-2">Room ID:</label>
-        <input
-          value={roomId}
-          onChange={e => setRoomId(e.target.value)}
-          className="p-2 bg-white/10 text-white rounded mb-4 border"
-          placeholder="Room ID..."
-        />
-        <button
-          type="submit"
-          onClick={() => (password === 'room' ? setLogin(true) : alert('Wrong password'))}
-          className="px-4 py-2 bg-gradient-to-r from-blue-500 to-purple-500 rounded hover:opacity-80 transition-opacity"
-        >
-          Enter
-        </button>
+      <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 flex items-center justify-center p-4">
+        {/* Animated background elements */}
+        <div className="absolute inset-0 overflow-hidden">
+          <div className="absolute -top-40 -right-40 w-80 h-80 bg-purple-500/10 rounded-full blur-3xl animate-pulse"></div>
+          <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-blue-500/10 rounded-full blur-3xl animate-pulse delay-1000"></div>
+          <div className="absolute top-1/2 left-1/2 w-60 h-60 bg-cyan-500/5 rounded-full blur-3xl animate-pulse delay-500"></div>
+        </div>
+        
+        <div className="relative z-10 w-full max-w-md">
+          {/* Glassmorphic login card */}
+          <div className="backdrop-blur-xl bg-white/[0.02] border border-white/10 rounded-3xl p-8 shadow-2xl animate-fadeInUp">
+            {/* Logo with glow effect */}
+            <div className="text-center mb-8">
+              <h1 className="text-5xl font-black bg-gradient-to-r from-purple-400 via-pink-400 to-cyan-400 bg-clip-text text-transparent mb-2 animate-shimmer">
+                LivePDF
+              </h1>
+              <div className="w-20 h-1 bg-gradient-to-r from-purple-400 to-cyan-400 mx-auto rounded-full opacity-60"></div>
+            </div>
+            
+            {/* Login form */}
+            <div className="space-y-6">
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-slate-300 block">Password</label>
+                <input
+                  type="password"
+                  value={password}
+                  onChange={e => setPassword(e.target.value)}
+                  onKeyPress={e => e.key === 'Enter' && (password === 'room' ? setLogin(true) : alert('Wrong password'))}
+                  className="w-full px-4 py-3 bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-purple-400/50 focus:border-transparent transition-all duration-200 hover:bg-white/10"
+                  placeholder="Enter password..."
+                />
+              </div>
+              
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-slate-300 block">Room ID</label>
+                <input
+                  value={roomId}
+                  onChange={e => setRoomId(e.target.value)}
+                  className="w-full px-4 py-3 bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-400/50 focus:border-transparent transition-all duration-200 hover:bg-white/10"
+                  placeholder="Room ID..."
+                />
+              </div>
+              
+              <button
+                onClick={() => (password === 'room' ? setLogin(true) : alert('Wrong password'))}
+                className="w-full py-3 bg-gradient-to-r from-purple-500 via-pink-500 to-cyan-500 text-white font-semibold rounded-xl shadow-lg hover:shadow-purple-500/25 hover:scale-105 transition-all duration-200 active:scale-95"
+              >
+                Enter Workspace
+              </button>
+            </div>
+            
+            {/* User info preview */}
+            <div className="mt-6 pt-6 border-t border-white/10">
+              <div className="flex items-center justify-center gap-2 text-sm text-slate-400">
+                <div className="w-3 h-3 rounded-full" style={{ backgroundColor: userColor }}></div>
+                <span>Joining as {userName}</span>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     )
 
   return (
-    <div className="flex flex-col items-center h-screen bg-gray-900 p-4 select-none">
-      <div className="mb-4">
-        <button
-          onClick={reset}
-          className="px-4 py-2 bg-gradient-to-br from-blue-700 to-fuchsia-800 text-white m-2 rounded hover:opacity-80 transition-opacity"
-        >
-          Reset
-        </button>
-        <button
-          onClick={toggleMode}
-          className="px-4 py-2 bg-gradient-to-br from-blue-700 to-fuchsia-700 text-white m-2 rounded hover:opacity-80 transition-opacity"
-        >
-          {mode === 'draw' ? 'Switch to Erase' : 'Switch to Draw'}
-        </button>
-        {pdfDoc && (
-          <>
-            <button
-              onClick={() => changePage(-1)}
-              disabled={currentPage <= 1}
-              className="px-4 py-2 bg-gray-600 text-white m-2 rounded disabled:opacity-50 hover:bg-gray-500 transition-colors"
-            >
-              Prev
-            </button>
-            <span className="text-white mx-2">
-              Page {currentPage} / {totalPages}
-            </span>
-            <button
-              onClick={() => changePage(1)}
-              disabled={currentPage >= totalPages}
-              className="px-4 py-2 bg-gray-600 text-white m-2 rounded disabled:opacity-50 hover:bg-gray-500 transition-colors"
-            >
-              Next
-            </button>
-          </>
-        )}
+    <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 text-white select-none">
+      {/* Background effects */}
+      <div className="fixed inset-0 overflow-hidden pointer-events-none">
+        <div className="absolute -top-40 -right-40 w-80 h-80 bg-purple-500/5 rounded-full blur-3xl animate-pulse"></div>
+        <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-blue-500/5 rounded-full blur-3xl animate-pulse delay-1000"></div>
       </div>
-      <label className="bg-gradient-to-br from-orange-700 to-red-900 text-white px-4 py-2 rounded cursor-pointer mb-4 hover:opacity-80 transition-opacity">
-        Upload PDF
-        <input type="file" accept="application/pdf" onChange={handleUpload} className="hidden" />
-      </label>
-      {loading && <div className="text-white">Loading PDF...</div>}
-      <div className="text-white mt-4 text-sm">
-        Mode: <span className="font-bold text-blue-300">{mode}</span> | Logged in as:{' '}
-        <span style={{ color: userColor }}>{userName}</span>
-        {socketRef.current?.connected ? (
-          <span className="text-green-400 ml-2">● Connected</span>
-        ) : (
-          <span className="text-red-400 ml-2">● Disconnected</span>
-        )}
+
+      {/* Header */}
+      <div className="relative z-10 backdrop-blur-xl bg-white/[0.02] border-b border-white/10 sticky top-0">
+        <div className="container mx-auto px-4 py-4">
+          <div className="flex flex-col lg:flex-row items-center justify-between gap-4">
+            {/* Logo */}
+            <h1 className="text-2xl font-bold bg-gradient-to-r from-purple-400 to-cyan-400 bg-clip-text text-transparent">
+              LivePDF
+            </h1>
+            
+            {/* Controls */}
+            <div className="flex flex-wrap items-center gap-3">
+              {/* Tool buttons */}
+              <div className="flex items-center gap-2 p-1 bg-white/5 backdrop-blur-sm rounded-xl border border-white/10">
+                <button
+                  onClick={toggleMode}
+                  className={`px-4 py-2 rounded-lg font-medium transition-all duration-200 ${
+                    mode === 'draw' 
+                      ? 'bg-gradient-to-r from-red-500 to-pink-500 text-white shadow-lg' 
+                      : 'bg-gradient-to-r from-gray-600 to-gray-700 text-white shadow-lg'
+                  }`}
+                >
+                  {mode === 'draw' ? '✏️ Draw' : '🧽 Erase'}
+                </button>
+                
+                <button
+                  onClick={reset}
+                  className="px-4 py-2 bg-gradient-to-r from-orange-500 to-red-500 text-white font-medium rounded-lg hover:scale-105 transition-all duration-200 shadow-lg active:scale-95"
+                >
+                  🗑️ Clear
+                </button>
+              </div>
+              
+              {/* PDF controls */}
+              {pdfDoc && (
+                <div className="flex items-center gap-2 p-1 bg-white/5 backdrop-blur-sm rounded-xl border border-white/10">
+                  <button
+                    onClick={() => changePage(-1)}
+                    disabled={currentPage <= 1}
+                    className="px-3 py-2 bg-slate-600 hover:bg-slate-500 disabled:bg-slate-700 disabled:opacity-50 text-white rounded-lg transition-all duration-200 font-medium"
+                  >
+                    ←
+                  </button>
+                  <span className="px-3 py-2 text-sm font-medium text-slate-300 min-w-[80px] text-center">
+                    {currentPage} / {totalPages}
+                  </span>
+                  <button
+                    onClick={() => changePage(1)}
+                    disabled={currentPage >= totalPages}
+                    className="px-3 py-2 bg-slate-600 hover:bg-slate-500 disabled:bg-slate-700 disabled:opacity-50 text-white rounded-lg transition-all duration-200 font-medium"
+                  >
+                    →
+                  </button>
+                </div>
+              )}
+              
+              {/* Upload button */}
+              <label className="px-4 py-2 bg-gradient-to-r from-emerald-500 to-teal-500 text-white font-medium rounded-lg cursor-pointer hover:scale-105 transition-all duration-200 shadow-lg active:scale-95 flex items-center gap-2">
+                📄 Upload PDF
+                <input type="file" accept="application/pdf" onChange={handleUpload} className="hidden" />
+              </label>
+            </div>
+          </div>
+        </div>
       </div>
-      <div style={{ position: 'relative', userSelect: 'none' }}>
-        <canvas
-          ref={canvasRef}
-          onMouseDown={handlePointerDown}
-          onMouseMove={handlePointerMove}
-          onMouseUp={handlePointerUp}
-          onMouseLeave={handlePointerUp}
-          onTouchStart={handlePointerDown}
-          onTouchMove={handlePointerMove}
-          onTouchEnd={handlePointerUp}
-          onTouchCancel={handlePointerUp}
-          className="border w-[600px] h-[800px] bg-white cursor-crosshair"
-          style={{ touchAction: 'none' }}
-        />
+      
+      {/* Main content */}
+      <div className="relative z-10 container mx-auto px-4 py-8">
+        <div className="flex flex-col xl:flex-row gap-8">
+          {/* Canvas section */}
+          <div className="flex-1 flex flex-col items-center">
+            {/* Loading indicator */}
+            {loading && (
+              <div className="mb-4 p-4 bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl">
+                <div className="flex items-center gap-3">
+                  <div className="animate-spin w-5 h-5 border-2 border-purple-400 border-t-transparent rounded-full"></div>
+                  <span className="text-slate-300">Loading PDF...</span>
+                </div>
+              </div>
+            )}
+            
+            {/* Canvas container */}
+            <div className="relative bg-white/5 backdrop-blur-sm border border-white/10 rounded-2xl p-4 shadow-2xl">
+              <canvas
+                ref={canvasRef}
+                onMouseDown={handlePointerDown}
+                onMouseMove={handlePointerMove}
+                onMouseUp={handlePointerUp}
+                onMouseLeave={handlePointerUp}
+                onTouchStart={handlePointerDown}
+                onTouchMove={handlePointerMove}
+                onTouchEnd={handlePointerUp}
+                onTouchCancel={handlePointerUp}
+                className="bg-white rounded-xl shadow-lg cursor-crosshair max-w-full h-auto"
+                style={{ touchAction: 'none', width: '600px', height: '800px' }}
+              />
+            </div>
+          </div>
+          
+          {/* Sidebar */}
+          <div className="xl:w-80">
+            <div className="space-y-6">
+              {/* Status card */}
+              <div className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-6 shadow-xl">
+                <h3 className="text-lg font-semibold mb-4 text-white">Session Status</h3>
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-300">Mode:</span>
+                    <span className={`px-3 py-1 rounded-full text-sm font-medium ${
+                      mode === 'draw' ? 'bg-red-500/20 text-red-300' : 'bg-gray-500/20 text-gray-300'
+                    }`}>
+                      {mode === 'draw' ? 'Drawing' : 'Erasing'}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-300">User:</span>
+                    <div className="flex items-center gap-2">
+                      <div className="w-3 h-3 rounded-full" style={{ backgroundColor: userColor }}></div>
+                      <span className="text-white font-medium">{userName}</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-300">Connection:</span>
+                    <div className="flex items-center gap-2">
+                      <div className={`w-2 h-2 rounded-full ${
+                        socketRef.current?.connected ? 'bg-green-400 animate-pulse' : 'bg-red-400'
+                      }`}></div>
+                      <span className={socketRef.current?.connected ? 'text-green-300' : 'text-red-300'}>
+                        {socketRef.current?.connected ? 'Connected' : 'Disconnected'}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-300">Room:</span>
+                    <span className="text-cyan-300 font-mono text-sm">{roomId}</span>
+                  </div>
+                </div>
+              </div>
+              
+              {/* Active users */}
+              {Object.keys(otherUsers).length > 0 && (
+                <div className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-6 shadow-xl">
+                  <h3 className="text-lg font-semibold mb-4 text-white">Active Users ({Object.keys(otherUsers).length})</h3>
+                  <div className="space-y-2">
+                    {Object.entries(otherUsers).map(([id, user]) => (
+                      <div key={id} className="flex items-center gap-3 p-2 bg-white/5 rounded-lg">
+                        <div className="w-3 h-3 rounded-full" style={{ backgroundColor: user.color }}></div>
+                        <span className="text-slate-300 text-sm">{user.name}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
       </div>
+      
+      
     </div>
   )
 }
