@@ -18,12 +18,12 @@ app.use(cors({
 app.use(express.json({ limit: '50mb' }))
 app.use(express.urlencoded({ limit: '50mb', extended: true }))
 
-const mongoUri = process.env.MONGO_URI 
+const mongoUri = process.env.MONGO_URI
 console.log('Connecting to MongoDB:', mongoUri)
 mongoose.connect(mongoUri)
 
 mongoose.connection.on('connected', () => console.log('MongoDB connected'))
-mongoose.connection.on('error', err => console.error('MongoDB connection error:', err))
+mongoose.connection.on('error', err => console.error('MongoDB error:', err))
 mongoose.connection.on('disconnected', () => console.log('MongoDB disconnected'))
 
 const sessionSchema = new mongoose.Schema({
@@ -44,366 +44,221 @@ const sessionSchema = new mongoose.Schema({
 sessionSchema.index({ updatedAt: -1 })
 
 const Session = mongoose.model('Session', sessionSchema)
-const usersInRoom = {}
-
-// Rate limiting for drawing events
-const drawingRateLimits = new Map()
+const activeUsers = {}
+const drawLimitMap = new Map()
 
 const io = new Server(server, {
   cors: { origin: process.env.FRONTEND_URL || 'http://localhost:5173', methods: ['GET', 'POST'] },
   pingTimeout: 60000,
   pingInterval: 25000,
-  // Optimize socket.io for real-time drawing
   transports: ['websocket'],
   upgrade: true,
   compression: true,
   httpCompression: true
 })
 
-function isValidDrawingData(data) {
-  return data && typeof data === 'object' && 
-    typeof data.x === 'number' && typeof data.y === 'number' &&
-    (data.mode === 'draw' || data.mode === 'erase') &&
-    (data.type === 'start' || data.type === 'move' || data.type === 'end') &&
-    !isNaN(data.x) && !isNaN(data.y) &&
-    data.x >= 0 && data.y >= 0 && data.x <= 10000 && data.y <= 10000
-}
+const validateDrawData = d =>
+  d && typeof d.x === 'number' && typeof d.y === 'number'
+  && ['draw', 'erase'].includes(d.mode)
+  && ['start', 'move', 'end'].includes(d.type)
+  && !isNaN(d.x) && !isNaN(d.y)
+  && d.x >= 0 && d.y >= 0 && d.x <= 10000 && d.y <= 10000
 
-function isValidCursorPosition(pos) {
-  return pos && typeof pos === 'object' && 
-    typeof pos.x === 'number' && typeof pos.y === 'number' &&
-    !isNaN(pos.x) && !isNaN(pos.y) &&
-    pos.x >= 0 && pos.y >= 0 && pos.x <= 10000 && pos.y <= 10000
-}
+const validateCursor = p =>
+  p && typeof p.x === 'number' && typeof p.y === 'number'
+  && !isNaN(p.x) && !isNaN(p.y)
+  && p.x >= 0 && p.y >= 0 && p.x <= 10000 && p.y <= 10000
 
-function checkRateLimit(socketId, limit = 100, windowMs = 1000) {
+function rateLimit(socketId, max = 100, windowMs = 1000) {
   const now = Date.now()
-  const userLimits = drawingRateLimits.get(socketId) || { count: 0, resetTime: now + windowMs }
-  
-  if (now > userLimits.resetTime) {
-    userLimits.count = 0
-    userLimits.resetTime = now + windowMs
+  let entry = drawLimitMap.get(socketId) || { count: 0, reset: now + windowMs }
+  if (now > entry.reset) {
+    entry.count = 0
+    entry.reset = now + windowMs
   }
-  
-  userLimits.count++
-  drawingRateLimits.set(socketId, userLimits)
-  
-  return userLimits.count <= limit
+  entry.count++
+  drawLimitMap.set(socketId, entry)
+  return entry.count <= max
 }
 
-// Clean up rate limit data periodically
 setInterval(() => {
   const now = Date.now()
-  for (const [socketId, limits] of drawingRateLimits) {
-    if (now > limits.resetTime) {
-      drawingRateLimits.delete(socketId)
-    }
+  for (const [id, limit] of drawLimitMap) {
+    if (now > limit.reset) drawLimitMap.delete(id)
   }
-}, 60000) // Clean up every minute
+}, 60000)
 
-io.on('connection', (socket) => {
-  let currentRoom = null
-  let userName = null
-  let userColor = null
+io.on('connection', socket => {
+  let roomId = null
+  let name = null
+  let color = null
+  let lastCursor = 0
 
-  socket.on('join-room', async (roomId, name, color) => {
+  socket.on('join-room', async (rid, userName, userColor) => {
     try {
-      if (!roomId || typeof roomId !== 'string') {
-        socket.emit('error', 'Invalid room ID')
-        return
-      }
-      if (currentRoom) {
-        socket.leave(currentRoom)
-        if (usersInRoom[currentRoom]) {
-          delete usersInRoom[currentRoom][socket.id]
-          io.in(currentRoom).emit('user-list', usersInRoom[currentRoom])
+      if (!rid || typeof rid !== 'string') return socket.emit('error', 'Invalid room ID')
+      if (roomId) {
+        socket.leave(roomId)
+        if (activeUsers[roomId]) {
+          delete activeUsers[roomId][socket.id]
+          io.in(roomId).emit('user-list', activeUsers[roomId])
         }
       }
-      
-      currentRoom = roomId.trim()
-      socket.join(currentRoom)
-      userName = (name && typeof name === 'string') ? name.trim() : `User-${Math.floor(Math.random() * 10000)}`
-      userColor = (color && typeof color === 'string' && color.match(/^#[0-9A-F]{6}$/i)) 
-        ? color 
-        : '#' + Math.floor(Math.random() * 16777215).toString(16)
-      
-      if (!usersInRoom[currentRoom]) usersInRoom[currentRoom] = {}
-      usersInRoom[currentRoom][socket.id] = { name: userName, color: userColor, x: 0, y: 0 }
-      
-      let session = await Session.findOne({ roomId: currentRoom })
+      roomId = rid.trim()
+      socket.join(roomId)
+      name = typeof userName === 'string' ? userName.trim() : `User-${Math.floor(Math.random() * 10000)}`
+      color = typeof userColor === 'string' && /^#[0-9A-F]{6}$/i.test(userColor)
+        ? userColor
+        : `#${Math.floor(Math.random() * 16777215).toString(16)}`
+      if (!activeUsers[roomId]) activeUsers[roomId] = {}
+      activeUsers[roomId][socket.id] = { name, color, x: 0, y: 0 }
+
+      let session = await Session.findOne({ roomId })
       if (!session) {
-        session = await Session.create({
-          roomId: currentRoom,
-          drawingData: [],
-          currentPage: 1,
-          updatedAt: new Date(),
-        })
+        session = await Session.create({ roomId, drawingData: [], currentPage: 1, updatedAt: new Date() })
       }
-      
+
       socket.emit('init-state', {
         drawingData: session.drawingData || [],
         pdfData: session.pdfData ? Array.from(session.pdfData) : null,
         currentPage: session.currentPage || 1,
         userId: socket.id,
-        userName,
-        userColor,
-        usersInRoom: usersInRoom[currentRoom],
+        userName: name,
+        userColor: color,
+        usersInRoom: activeUsers[roomId]
       })
-      
-      io.in(currentRoom).emit('user-list', usersInRoom[currentRoom])
-    } catch (error) {
-      console.error('Join room error:', error)
-      socket.emit('error', 'Failed to join room')
+
+      io.in(roomId).emit('user-list', activeUsers[roomId])
+    } catch (err) {
+      console.error('Join error:', err)
+      socket.emit('error', 'Join failed')
     }
   })
 
-  // Handle single draw events (for backward compatibility)
-  socket.on('draw', async (data) => {
-    if (!currentRoom) {
-      socket.emit('error', 'Not in a room')
-      return
-    }
-
-    if (!checkRateLimit(socket.id)) {
-      return // Silently drop if rate limited
-    }
-
+  socket.on('draw', async data => {
+    if (!roomId || !rateLimit(socket.id)) return
     try {
-      let drawData = data
-      if (typeof data === 'string') {
-        try { drawData = JSON.parse(data) } catch { return }
-      }
-      
-      if (!isValidDrawingData(drawData)) return
-
-      // Add timestamp and user info
-      const enhancedDrawData = {
-        ...drawData,
-        color: drawData.color || userColor,
-        timestamp: new Date()
-      }
-
-      await Session.updateOne(
-        { roomId: currentRoom },
-        { $push: { drawingData: enhancedDrawData }, $set: { updatedAt: new Date() } },
-        { upsert: true }
-      )
-      
-      socket.to(currentRoom).emit('draw', enhancedDrawData)
-    } catch (error) {
-      console.error('Draw error:', error)
-      socket.emit('error', 'Failed to process drawing')
+      let payload = typeof data === 'string' ? JSON.parse(data) : data
+      if (!validateDrawData(payload)) return
+      const entry = { ...payload, color: payload.color || color, timestamp: new Date() }
+      await Session.updateOne({ roomId }, { $push: { drawingData: entry }, $set: { updatedAt: new Date() } }, { upsert: true })
+      socket.to(roomId).emit('draw', entry)
+    } catch (err) {
+      console.error('Draw error:', err)
+      socket.emit('error', 'Draw failed')
     }
   })
 
-  // Handle batch draw events (optimized)
-  socket.on('draw-batch', async (batch) => {
-    if (!currentRoom) {
-      socket.emit('error', 'Not in a room')
-      return
-    }
-
-    if (!checkRateLimit(socket.id, 200, 1000)) {
-      return // Higher limit for batches
-    }
-
+  socket.on('draw-batch', async batch => {
+    if (!roomId || !rateLimit(socket.id, 200, 1000)) return
     try {
-      if (!Array.isArray(batch) || batch.length === 0) return
-
-      // Validate and enhance all batch items
-      const validBatch = []
-      for (const data of batch) {
-        if (isValidDrawingData(data)) {
-          validBatch.push({
-            ...data,
-            color: data.color || userColor,
-            timestamp: new Date()
-          })
-        }
-      }
-
-      if (validBatch.length === 0) return
-
-      // Bulk insert to database
+      if (!Array.isArray(batch) || !batch.length) return
+      const entries = batch.filter(validateDrawData).map(d => ({
+        ...d, color: d.color || color, timestamp: new Date()
+      }))
+      if (!entries.length) return
       await Session.updateOne(
-        { roomId: currentRoom },
-        { $push: { drawingData: { $each: validBatch } }, $set: { updatedAt: new Date() } },
+        { roomId },
+        { $push: { drawingData: { $each: entries } }, $set: { updatedAt: new Date() } },
         { upsert: true }
       )
-      
-      // Broadcast to other users
-      socket.to(currentRoom).emit('draw-batch', validBatch)
-    } catch (error) {
-      console.error('Draw batch error:', error)
-      socket.emit('error', 'Failed to process drawing batch')
+      socket.to(roomId).emit('draw-batch', entries)
+    } catch (err) {
+      console.error('Batch error:', err)
+      socket.emit('error', 'Batch failed')
     }
   })
 
   socket.on('reset-canvas', async () => {
-    if (!currentRoom) {
-      socket.emit('error', 'Not in a room')
-      return
-    }
+    if (!roomId) return
     try {
+      await Session.updateOne({ roomId }, { $set: { drawingData: [], updatedAt: new Date() } }, { upsert: true })
+      io.in(roomId).emit('reset-canvas')
+    } catch (err) {
+      console.error('Reset error:', err)
+      socket.emit('error', 'Reset failed')
+    }
+  })
+
+  socket.on('mode-change', m => {
+    if (roomId && ['draw', 'erase'].includes(m)) socket.to(roomId).emit('mode-change', m)
+  })
+
+  socket.on('page-change', async page => {
+    if (!roomId || typeof page !== 'number' || page < 1 || !Number.isInteger(page)) return
+    try {
+      await Session.updateOne({ roomId }, { $set: { currentPage: page, updatedAt: new Date() } }, { upsert: true })
+      socket.to(roomId).emit('page-change', page)
+    } catch (err) {
+      console.error('Page error:', err)
+    }
+  })
+
+  socket.on('pdf-upload', async data => {
+    if (!roomId) return
+    try {
+      const buffer = Buffer.from(data)
+      if (buffer.length > 50 * 1024 * 1024) return socket.emit('error', 'PDF too large')
       await Session.updateOne(
-        { roomId: currentRoom }, 
-        { $set: { drawingData: [], updatedAt: new Date() } },
+        { roomId },
+        { $set: { pdfData: buffer, currentPage: 1, drawingData: [], updatedAt: new Date() } },
         { upsert: true }
       )
-      io.in(currentRoom).emit('reset-canvas')
-    } catch (error) {
-      console.error('Reset canvas error:', error)
-      socket.emit('error', 'Failed to reset canvas')
+      socket.to(roomId).emit('pdf-upload', data)
+      io.in(roomId).emit('reset-canvas')
+    } catch (err) {
+      console.error('PDF upload error:', err)
+      socket.emit('error', 'Upload failed')
     }
   })
 
-  socket.on('mode-change', (mode) => {
-    if (!currentRoom) {
-      socket.emit('error', 'Not in a room')
-      return
-    }
-    if (mode !== 'draw' && mode !== 'erase') return
-    socket.to(currentRoom).emit('mode-change', mode)
-  })
-
-  socket.on('page-change', async (pageNum) => {
-    if (!currentRoom) {
-      socket.emit('error', 'Not in a room')
-      return
-    }
-    try {
-      if (typeof pageNum !== 'number' || pageNum < 1 || !Number.isInteger(pageNum)) return
-      await Session.updateOne(
-        { roomId: currentRoom }, 
-        { $set: { currentPage: pageNum, updatedAt: new Date() } },
-        { upsert: true }
-      )
-      socket.to(currentRoom).emit('page-change', pageNum)
-    } catch (error) {
-      console.error('Page change error:', error)
-      socket.emit('error', 'Failed to change page')
-    }
-  })
-
-  socket.on('pdf-upload', async (data) => {
-    if (!currentRoom) {
-      socket.emit('error', 'Not in a room')
-      return
-    }
-    try {
-      if (!data || !(data instanceof ArrayBuffer) && !Buffer.isBuffer(data)) {
-        socket.emit('error', 'Invalid PDF data')
-        return
-      }
-      
-      const pdfBuffer = Buffer.from(data)
-      if (pdfBuffer.length > 50 * 1024 * 1024) {
-        socket.emit('error', 'PDF file too large')
-        return
-      }
-      
-      await Session.updateOne(
-        { roomId: currentRoom }, 
-        { 
-          $set: { 
-            pdfData: pdfBuffer, 
-            currentPage: 1, 
-            drawingData: [], 
-            updatedAt: new Date() 
-          } 
-        },
-        { upsert: true }
-      )
-      
-      socket.to(currentRoom).emit('pdf-upload', data)
-      io.in(currentRoom).emit('reset-canvas')
-    } catch (error) {
-      console.error('PDF upload error:', error)
-      socket.emit('error', 'Failed to upload PDF')
-    }
-  })
-
-  // Optimized cursor tracking with throttling
-  let lastCursorUpdate = 0
-  socket.on('cursor-move', (pos) => {
-    if (!currentRoom) return
-    
+  socket.on('cursor-move', pos => {
+    if (!roomId) return
     const now = Date.now()
-    if (now - lastCursorUpdate < 16) return // Throttle to ~60fps
-    lastCursorUpdate = now
-    
-    if (!isValidCursorPosition(pos)) return
-    
-    if (usersInRoom[currentRoom] && usersInRoom[currentRoom][socket.id]) {
-      usersInRoom[currentRoom][socket.id].x = pos.x
-      usersInRoom[currentRoom][socket.id].y = pos.y
+    if (now - lastCursor < 16) return
+    lastCursor = now
+    if (!validateCursor(pos)) return
+    if (activeUsers[roomId] && activeUsers[roomId][socket.id]) {
+      activeUsers[roomId][socket.id].x = pos.x
+      activeUsers[roomId][socket.id].y = pos.y
     }
-    
-    socket.to(currentRoom).emit('user-cursor', {
-      socketId: socket.id,
-      name: userName,
-      color: userColor,
-      x: pos.x,
-      y: pos.y,
-    })
+    socket.to(roomId).emit('user-cursor', { socketId: socket.id, name, color, x: pos.x, y: pos.y })
   })
 
   socket.on('disconnect', () => {
-    // Clean up rate limiting data
-    drawingRateLimits.delete(socket.id)
-    
-    if (currentRoom && usersInRoom[currentRoom]) {
-      delete usersInRoom[currentRoom][socket.id]
-      if (Object.keys(usersInRoom[currentRoom]).length === 0) {
-        delete usersInRoom[currentRoom]
-      } else {
-        io.in(currentRoom).emit('user-list', usersInRoom[currentRoom])
-      }
+    drawLimitMap.delete(socket.id)
+    if (roomId && activeUsers[roomId]) {
+      delete activeUsers[roomId][socket.id]
+      if (!Object.keys(activeUsers[roomId]).length) delete activeUsers[roomId]
+      else io.in(roomId).emit('user-list', activeUsers[roomId])
     }
-  })
-
-  socket.on('error', (error) => {
-    console.error('Socket error:', error)
   })
 })
 
 app.get('/health', (req, res) => {
-  res.json({ 
-    status: 'ok', 
+  res.json({
+    status: 'ok',
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
     mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
-    activeRooms: Object.keys(usersInRoom).length,
-    totalUsers: Object.values(usersInRoom).reduce((acc, room) => acc + Object.keys(room).length, 0)
+    activeRooms: Object.keys(activeUsers).length,
+    totalUsers: Object.values(activeUsers).reduce((a, r) => a + Object.keys(r).length, 0)
   })
 })
 
-// Cleanup old sessions periodically (optional)
 setInterval(async () => {
   try {
-    const oneWeekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
-    await Session.deleteMany({ updatedAt: { $lt: oneWeekAgo } })
-  } catch (error) {
-    console.error('Cleanup error:', error)
+    const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
+    await Session.deleteMany({ updatedAt: { $lt: weekAgo } })
+  } catch (err) {
+    console.error('Cleanup error:', err)
   }
-}, 24 * 60 * 60 * 1000) // Run daily
+}, 24 * 60 * 60 * 1000)
 
-process.on('SIGTERM', () => {
-  server.close(() => {
-    mongoose.connection.close(false, () => {
-      process.exit(0)
-    })
-  })
-})
+function gracefulExit() {
+  server.close(() => mongoose.connection.close(false, () => process.exit(0)))
+}
+process.on('SIGTERM', gracefulExit)
+process.on('SIGINT', gracefulExit)
 
-process.on('SIGINT', () => {
-  server.close(() => {
-    mongoose.connection.close(false, () => {
-      process.exit(0)
-    })
-  })
-})
-
-server.listen(PORT, () => {
-  console.log(`Server listening on port ${PORT}`)
-})
+server.listen(PORT, () => console.log(`Server running on port ${PORT}`))
