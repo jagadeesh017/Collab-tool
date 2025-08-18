@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState } from 'react'
+import { useRef, useEffect, useState, useCallback } from 'react'
 import { io } from 'socket.io-client'
 
 function randomColor() {
@@ -14,6 +14,9 @@ export default function App() {
   const canvasRef = useRef(null)
   const isDrawing = useRef(false)
   const socketRef = useRef(null)
+  const lastPointRef = useRef(null)
+  const drawingBatchRef = useRef([])
+  const batchTimeoutRef = useRef(null)
   const [mode, setMode] = useState('draw')
   const [login, setLogin] = useState(false)
   const [password, setPassword] = useState('')
@@ -28,6 +31,15 @@ export default function App() {
   const [loading, setLoading] = useState(false)
   const drawingDataRef = useRef([])
   const [otherUsers, setOtherUsers] = useState({})
+
+  // Batch drawing data for better performance
+  const sendDrawingBatch = useCallback(() => {
+    if (drawingBatchRef.current.length > 0 && socketRef.current?.connected) {
+      const batch = [...drawingBatchRef.current]
+      drawingBatchRef.current = []
+      socketRef.current.emit('draw-batch', batch)
+    }
+  }, [])
 
   useEffect(() => {
     if (!window.pdfjsLib) {
@@ -60,8 +72,13 @@ export default function App() {
 
   useEffect(() => {
     if (!login || !drawingLayer) return
-    const socket = io(import.meta.env.VITE_BACKEND_URL || 'http://localhost:3000', { transports: ['websocket', 'polling'] })
+    const socket = io(import.meta.env.VITE_BACKEND_URL || 'http://localhost:3000', { 
+      transports: ['websocket', 'polling'],
+      upgrade: true,
+      rememberUpgrade: true
+    })
     socketRef.current = socket
+
     socket.emit('join-room', roomId, userName, userColor)
 
     const initStateHandler = async ({ drawingData, pdfData, currentPage }) => {
@@ -84,15 +101,33 @@ export default function App() {
         redrawFromDrawingData(drawingDataRef.current)
       }
     }
+
     socket.on('init-state', initStateHandler)
+    
+    // Handle single draw events (for backward compatibility)
     socket.on('draw', (data) => {
       if (data && typeof data === 'object') {
-        drawOnLayer(data.x, data.y, data.mode, data.type)
+        drawOnLayer(data.x, data.y, data.mode, data.type, data.color || 'red')
         drawingDataRef.current.push(data)
         redrawCanvas()
       }
     })
+
+    // Handle batch draw events (new optimized version)
+    socket.on('draw-batch', (batch) => {
+      if (Array.isArray(batch)) {
+        batch.forEach(data => {
+          if (data && typeof data === 'object') {
+            drawOnLayer(data.x, data.y, data.mode, data.type, data.color || 'red')
+            drawingDataRef.current.push(data)
+          }
+        })
+        redrawCanvas()
+      }
+    })
+
     socket.on('reset-canvas', () => { clearDrawingLayerLocal(false) })
+    
     socket.on('pdf-upload', async (arrayBuffer) => {
       const pdfjsLib = window.pdfjsLib
       if (!pdfjsLib) return
@@ -105,36 +140,45 @@ export default function App() {
         setCurrentPage(1)
       } catch { } finally { setLoading(false) }
     })
+    
     socket.on('page-change', (pageNum) => {
       if (typeof pageNum === 'number' && pageNum > 0) setCurrentPage(pageNum)
     })
+    
     socket.on('mode-change', (newMode) => {
       if (newMode === 'draw' || newMode === 'erase') setMode(newMode)
     })
+    
     socket.on('user-cursor', ({ socketId, x, y, name, color }) => {
       if (socketId && typeof x === 'number' && typeof y === 'number') {
         setOtherUsers(prev => ({ ...prev, [socketId]: { x, y, name, color } }))
       }
     })
+    
     socket.on('user-list', (users) => {
       if (users && typeof users === 'object') setOtherUsers(users)
     })
-    socket.on('connect_error', () => {})
 
     return () => {
+      // Clear any pending batch timeouts
+      if (batchTimeoutRef.current) {
+        clearTimeout(batchTimeoutRef.current)
+        sendDrawingBatch() // Send any remaining batch data
+      }
+      
       socket.off('init-state')
       socket.off('draw')
+      socket.off('draw-batch')
       socket.off('reset-canvas')
       socket.off('pdf-upload')
       socket.off('page-change')
       socket.off('mode-change')
       socket.off('user-cursor')
       socket.off('user-list')
-      socket.off('connect_error')
       socket.disconnect()
       socketRef.current = null
     }
-  }, [login, drawingLayer, roomId, userName, userColor])
+  }, [login, drawingLayer, roomId, userName, userColor, sendDrawingBatch])
 
   useEffect(() => {
     if (pdfDoc && pdfLayer && drawingLayer && currentPage > 0) renderPage(currentPage)
@@ -146,19 +190,56 @@ export default function App() {
     ctx.clearRect(0, 0, drawingLayer.width, drawingLayer.height)
     drawingDataRef.current = []
     redrawCanvas()
-    if (emit && socketRef.current && socketRef.current.connected) socketRef.current.emit('reset-canvas')
+    if (emit && socketRef.current?.connected) socketRef.current.emit('reset-canvas')
   }
 
   const redrawFromDrawingData = (data) => {
     if (!drawingLayer || !Array.isArray(data)) return
     const ctx = drawingLayer.getContext('2d')
     ctx.clearRect(0, 0, drawingLayer.width, drawingLayer.height)
+    
+    let currentPath = null
     data.forEach(point => {
       if (point && typeof point.x === 'number' && typeof point.y === 'number') {
-        drawOnLayer(point.x, point.y, point.mode, point.type)
+        if (point.type === 'start') {
+          currentPath = { mode: point.mode, color: point.color || 'red', points: [{ x: point.x, y: point.y }] }
+        } else if (point.type === 'move' && currentPath) {
+          currentPath.points.push({ x: point.x, y: point.y })
+        } else if (point.type === 'end' && currentPath) {
+          drawSmoothPath(currentPath.points, currentPath.mode, currentPath.color)
+          currentPath = null
+        }
       }
     })
     redrawCanvas()
+  }
+
+  const drawSmoothPath = (points, mode, color) => {
+    if (!drawingLayer || points.length < 2) return
+    const ctx = drawingLayer.getContext('2d')
+    
+    ctx.lineWidth = mode === 'draw' ? 3 : 20
+    ctx.strokeStyle = mode === 'draw' ? (color || 'red') : 'rgba(0,0,0,1)'
+    ctx.globalCompositeOperation = mode === 'draw' ? 'source-over' : 'destination-out'
+    ctx.lineCap = 'round'
+    ctx.lineJoin = 'round'
+    
+    ctx.beginPath()
+    ctx.moveTo(points[0].x, points[0].y)
+    
+    if (points.length === 2) {
+      ctx.lineTo(points[1].x, points[1].y)
+    } else {
+      // Use quadratic curves for smoother lines
+      for (let i = 1; i < points.length - 1; i++) {
+        const xc = (points[i].x + points[i + 1].x) / 2
+        const yc = (points[i].y + points[i + 1].y) / 2
+        ctx.quadraticCurveTo(points[i].x, points[i].y, xc, yc)
+      }
+      ctx.lineTo(points[points.length - 1].x, points[points.length - 1].y)
+    }
+    
+    ctx.stroke()
   }
 
   const renderPage = async (pageNumber) => {
@@ -195,7 +276,7 @@ export default function App() {
     setLoading(true)
     try {
       const arrayBuffer = await file.arrayBuffer()
-      if (socketRef.current && socketRef.current.connected) {
+      if (socketRef.current?.connected) {
         socketRef.current.emit('pdf-upload', arrayBuffer)
       }
       const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) }).promise
@@ -218,19 +299,27 @@ export default function App() {
     drawOtherUsersCursors(ctx)
   }
 
-  const drawOnLayer = (x, y, mode, type) => {
+  const drawOnLayer = (x, y, mode, type, color = 'red') => {
     const ctx = drawingLayer?.getContext('2d')
     if (!ctx || typeof x !== 'number' || typeof y !== 'number') return
-    ctx.lineWidth = mode === 'draw' ? 2 : 20
-    ctx.strokeStyle = mode === 'draw' ? 'red' : 'rgba(0,0,0,1)'
+    
+    ctx.lineWidth = mode === 'draw' ? 3 : 20
+    ctx.strokeStyle = mode === 'draw' ? color : 'rgba(0,0,0,1)'
     ctx.globalCompositeOperation = mode === 'draw' ? 'source-over' : 'destination-out'
     ctx.lineCap = 'round'
+    ctx.lineJoin = 'round'
+    
     if (type === 'start') {
       ctx.beginPath()
       ctx.moveTo(x, y)
-    } else if (type === 'move') {
+      lastPointRef.current = { x, y }
+    } else if (type === 'move' && lastPointRef.current) {
+      // Draw smooth line between last point and current point
+      ctx.beginPath()
+      ctx.moveTo(lastPointRef.current.x, lastPointRef.current.y)
       ctx.lineTo(x, y)
       ctx.stroke()
+      lastPointRef.current = { x, y }
     }
   }
 
@@ -254,36 +343,73 @@ export default function App() {
     }
   }
 
+  const addToDrawingBatch = (drawData) => {
+    drawingBatchRef.current.push(drawData)
+    drawingDataRef.current.push(drawData)
+    
+    // Clear existing timeout and set a new one
+    if (batchTimeoutRef.current) {
+      clearTimeout(batchTimeoutRef.current)
+    }
+    
+    // Send batch every 16ms (60fps) or when batch reaches 10 points
+    if (drawingBatchRef.current.length >= 10) {
+      sendDrawingBatch()
+    } else {
+      batchTimeoutRef.current = setTimeout(sendDrawingBatch, 16)
+    }
+  }
+
   const handlePointerDown = (e) => {
     e.preventDefault()
-    if (!socketRef.current || !socketRef.current.connected) return
+    if (!socketRef.current?.connected) return
     isDrawing.current = true
     const coords = getCoords(e)
-    const drawData = { ...coords, mode, type: 'start' }
-    drawOnLayer(coords.x, coords.y, mode, 'start')
+    const drawData = { ...coords, mode, type: 'start', color: userColor }
+    drawOnLayer(coords.x, coords.y, mode, 'start', userColor)
     redrawCanvas()
-    socketRef.current.emit('draw', drawData)
+    addToDrawingBatch(drawData)
     socketRef.current.emit('cursor-move', coords)
-    drawingDataRef.current.push(drawData)
   }
 
   const handlePointerMove = (e) => {
     e.preventDefault()
     const coords = getCoords(e)
-    if (socketRef.current && socketRef.current.connected) {
+    if (socketRef.current?.connected) {
       socketRef.current.emit('cursor-move', coords)
     }
-    if (!isDrawing.current || !socketRef.current || !socketRef.current.connected) return
-    const drawData = { ...coords, mode, type: 'move' }
-    drawOnLayer(coords.x, coords.y, mode, 'move')
+    if (!isDrawing.current || !socketRef.current?.connected) return
+    
+    // Throttle drawing points to reduce noise
+    if (lastPointRef.current) {
+      const distance = Math.sqrt(
+        Math.pow(coords.x - lastPointRef.current.x, 2) + 
+        Math.pow(coords.y - lastPointRef.current.y, 2)
+      )
+      if (distance < 2) return // Skip points that are too close
+    }
+    
+    const drawData = { ...coords, mode, type: 'move', color: userColor }
+    drawOnLayer(coords.x, coords.y, mode, 'move', userColor)
     redrawCanvas()
-    socketRef.current.emit('draw', drawData)
-    drawingDataRef.current.push(drawData)
+    addToDrawingBatch(drawData)
   }
 
   const handlePointerUp = (e) => {
     e.preventDefault()
+    if (isDrawing.current) {
+      const coords = getCoords(e)
+      const drawData = { ...coords, mode, type: 'end', color: userColor }
+      addToDrawingBatch(drawData)
+      
+      // Force send any remaining batch data
+      if (batchTimeoutRef.current) {
+        clearTimeout(batchTimeoutRef.current)
+        sendDrawingBatch()
+      }
+    }
     isDrawing.current = false
+    lastPointRef.current = null
   }
 
   const reset = () => clearDrawingLayerLocal()
@@ -291,7 +417,7 @@ export default function App() {
   const toggleMode = () => {
     const newMode = mode === 'draw' ? 'erase' : 'draw'
     setMode(newMode)
-    if (socketRef.current && socketRef.current.connected) {
+    if (socketRef.current?.connected) {
       socketRef.current.emit('mode-change', newMode)
     }
   }
@@ -300,7 +426,7 @@ export default function App() {
     const newPage = currentPage + dir
     if (newPage < 1 || newPage > totalPages) return
     setCurrentPage(newPage)
-    if (socketRef.current && socketRef.current.connected) {
+    if (socketRef.current?.connected) {
       socketRef.current.emit('page-change', newPage)
     }
   }
@@ -313,18 +439,19 @@ export default function App() {
       ctx.beginPath()
       ctx.fillStyle = user.color || 'blue'
       ctx.strokeStyle = 'white'
-      ctx.lineWidth = 1
-      const size = 10
+      ctx.lineWidth = 2
+      const size = 8
       ctx.arc(user.x, user.y, size, 0, 2 * Math.PI)
       ctx.fill()
       ctx.stroke()
       ctx.fillStyle = 'black'
-      ctx.font = '12px Arial'
+      ctx.font = '11px Arial'
       ctx.fillText(user.name || 'User', user.x + size + 2, user.y + size / 2)
       ctx.restore()
     })
   }
 
+  // Rest of the component remains the same...
   if (!login)
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 flex items-center justify-center p-4">
@@ -336,11 +463,11 @@ export default function App() {
         </div>
         
         <div className="relative z-10 w-full max-w-md">
-          {/* Glassmorphic login card */}
+        
           <div className="backdrop-blur-xl bg-white/[0.02] border border-white/10 rounded-3xl p-8 shadow-2xl animate-fadeInUp">
-            {/* Logo with glow effect */}
+          
             <div className="text-center mb-8">
-              <h1 className="text-5xl font-black bg-gradient-to-r from-purple-400 via-pink-400 to-cyan-400 bg-clip-text text-transparent mb-2 animate-shimmer">
+              <h1 className="text-5xl font-black bg-gradient-to-r from-purple-400 via-pink-400 to-cyan-500 bg-clip-text text-transparent mb-2 animate-shimmer">
                 LivePDF
               </h1>
               <div className="w-20 h-1 bg-gradient-to-r from-purple-400 to-cyan-400 mx-auto rounded-full opacity-60"></div>
@@ -372,7 +499,7 @@ export default function App() {
               
               <button
                 onClick={() => (password === 'room' ? setLogin(true) : alert('Wrong password'))}
-                className="w-full py-3 bg-gradient-to-r from-purple-500 via-pink-500 to-cyan-500 text-white font-semibold rounded-xl shadow-lg hover:shadow-purple-500/25 hover:scale-105 transition-all duration-200 active:scale-95"
+                className="w-full py-3 bg-gradient-to-r from-purple-500 via-blue-500 to-fuchsia-500 text-white font-semibold rounded-xl shadow-lg hover:shadow-purple-500/25 hover:scale-105 transition-all duration-200 active:scale-95"
               >
                 Enter Workspace
               </button>
@@ -554,8 +681,6 @@ export default function App() {
           </div>
         </div>
       </div>
-      
-      
     </div>
   )
 }
