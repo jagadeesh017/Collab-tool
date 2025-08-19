@@ -42,7 +42,7 @@ export default function App() {
     }
   }, [])
 
-  // Load PDF.js
+  
   useEffect(() => {
     if (!window.pdfjsLib) {
       const script = document.createElement('script')
@@ -58,7 +58,7 @@ export default function App() {
     }
   }, [])
 
-  // Setup base canvas layers once logged in
+  
   useEffect(() => {
     if (!loggedIn) return
     const canvas = canvasRef.current
@@ -72,7 +72,7 @@ export default function App() {
     drawingLayerRef.current = draw
   }, [loggedIn])
 
-  // Initialize socket
+ 
   useEffect(() => {
     if (!loggedIn || !drawingLayerRef.current) return
 
@@ -151,7 +151,7 @@ export default function App() {
     }
   }, [loggedIn, roomId, userName, userColor, flushBatch])
 
-  // Render PDF page
+ 
   useEffect(() => {
     if (pdfDoc && currentPage > 0) renderPdfPage(currentPage)
   }, [pdfDoc, currentPage])
@@ -371,7 +371,7 @@ export default function App() {
     }
   }
 
-  // --- Rendering ---
+ 
   if (!loggedIn) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 p-4">
